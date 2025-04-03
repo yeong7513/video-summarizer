@@ -1,26 +1,30 @@
+import os, re, logging, traceback, tiktoken
+
 from flask import Flask, request, jsonify
 from youtube_transcript_api import YouTubeTranscriptApi, TranscriptsDisabled, NoTranscriptFound
-from transformers import AutoTokenizer, AutoModelForSeq2SeqLM
-import re
-import logging
-import torch
-import traceback
+from openai import OpenAI, APIError
+from dotenv import load_dotenv
 
+load_dotenv()
+
+# Настройка логирования
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     handlers=[logging.StreamHandler()]
 )
+
 logger = logging.getLogger(__name__)
 app = Flask(__name__)
 
-# Инициализация модели для английского языка
-tokenizer_en = AutoTokenizer.from_pretrained("facebook/bart-large-cnn")
-model_en = AutoModelForSeq2SeqLM.from_pretrained("facebook/bart-large-cnn")
+# Конфигурация Deepseek
+DEEPSEEK_API_KEY = os.getenv("DEEPSEEK_API_KEY")
+MAX_TOKENS = 300  # Максимальное количество токенов для ответа
+MAX_INPUT_TOKENS = 6000  # Максимальное количество токенов во входных данных
 
-@app.route('/', methods=['GET'])
-def home():
-    return "YouTube Video Summarizer (English)"
+# Инициализация клиента и токенизатора
+client = OpenAI(api_key=DEEPSEEK_API_KEY, base_url="https://api.deepseek.com")
+tokenizer = tiktoken.get_encoding("cl100k_base")
 
 def extract_video_id(url):
     patterns = [
@@ -36,47 +40,57 @@ def extract_video_id(url):
     return None
 
 def get_transcript(video_id):
-    """Получение английских субтитров"""
+    """Получение и обработка субтитров"""
     try:
-        # Попытка получить ручные английские субтитры
         transcript = YouTubeTranscriptApi.get_transcript(video_id, languages=['en'])
-        logger.info(f"transcript: {transcript}")
         return " ".join([entry['text'] for entry in transcript])
-    
     except (TranscriptsDisabled, NoTranscriptFound):
         try:
-            # Попытка получить автоматические английские субтитры
             transcript_list = YouTubeTranscriptApi.list_transcripts(video_id)
-            logger.info(f"transcript_list: {transcript_list}")
             auto_sub = transcript_list.find_generated_transcript(['en'])
-            logger.info(f"auto_sub: {auto_sub}")
-            transcript = auto_sub.fetch()
-            logger.info(f"transcript(auto_sub): {transcript}")
-            return " ".join([entry.text for entry in transcript])
-        
+            return " ".join([entry.text for entry in auto_sub.fetch()])
         except Exception as e:
-            logger.error(f"Ошибка получения субтитров: {str(e)}")
-            raise Exception("Английские субтитры недоступны")
+            logger.error(f"Transcript error: {str(e)}")
+            raise Exception("Subtitles unavailable")
 
-def summarize_text(text):
-    """Суммаризация английского текста"""
-    inputs = tokenizer_en(
-        text,
-        max_length=1024,
-        truncation=True,
-        return_tensors="pt"
-    )
+def truncate_text(text, max_tokens):
+    """Обрезка текста до максимального количества токенов"""
+    tokens = tokenizer.encode(text)[:max_tokens]
+    return tokenizer.decode(tokens)
+
+def summarize_with_deepseek(text):
+    """Суммаризация с обработкой ошибок и ограничениями"""
+    try:
+        truncated_text = truncate_text(text, MAX_INPUT_TOKENS)
+        logger.info(f"Truncated text length: {len(tokenizer.encode(truncated_text))} tokens")
+        
+        response = client.chat.completions.create(
+            model="deepseek-chat",
+            messages=[
+                {
+                    "role": "system", 
+                    "content": "You are an expert summarizer. Create concise bullet-point summary in English."
+                },
+                {
+                    "role": "user",
+                    "content": f"Summarize this video transcript:\n\n{truncated_text}"
+                }
+            ],
+            temperature=0.3,
+            max_tokens=MAX_TOKENS
+        )
+        
+        if not response.choices:
+            raise APIError("Empty response from API")
+            
+        return response.choices[0].message.content
     
-    summary_ids = model_en.generate(
-        inputs["input_ids"],
-        max_length=150,
-        min_length=30,
-        length_penalty=2.0,
-        num_beams=4,
-        early_stopping=True
-    )
-    
-    return tokenizer_en.decode(summary_ids[0], skip_special_tokens=True)
+    except APIError as e:
+        logger.error(f"Deepseek API Error: {e}")
+        raise Exception(f"API Error: {e.message}")
+    except Exception as e:
+        logger.error(f"Unexpected error: {str(e)}")
+        raise Exception("Summary generation failed")
 
 @app.route('/summarize', methods=['POST'])
 def summarize():
@@ -89,19 +103,19 @@ def summarize():
         if not video_id:
             return jsonify({"error": "Invalid YouTube URL"}), 400
 
-        text = get_transcript(video_id)
-        logger.info(f"text: {text}")
-        summary = summarize_text(text)
-        logger.info(f"summary: {summary}")
+        transcript_text = get_transcript(video_id)
+        logger.info(f"Original transcript length: {len(transcript_text)} characters")
         
-        return jsonify({
-            "summary": summary,
-            "video_id": video_id
-        })
+        summary = summarize_with_deepseek(transcript_text)
+        return jsonify({"summary": summary, "video_id": video_id})
     
     except Exception as e:
-        logger.error(f"Processing error: {traceback.format_exc()}")
+        logger.error(f"Error: {traceback.format_exc()}")
         return jsonify({"error": str(e)}), 500
 
 if __name__ == '__main__':
+    if not DEEPSEEK_API_KEY:
+        logger.error("DEEPSEEK_API_KEY not found in environment variables")
+        exit(1)
+        
     app.run(host='0.0.0.0', port=5000)
