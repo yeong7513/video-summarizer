@@ -20,8 +20,8 @@ A Flask-based web service that extracts and summarizes English subtitles when yo
 
 1. Clone the repository:
 ```bash
-git clone https:///github.com/yeong7513/video-summarizer.git
-cd video-summarizer
+git clone https:///github.com/yeong7513/video-summarizer-flask.git
+cd video-summarizer-flask
 ```
 
 2. Install dependencies:
