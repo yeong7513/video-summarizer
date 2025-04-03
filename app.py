@@ -42,12 +42,12 @@ def extract_video_id(url):
 def get_transcript(video_id):
     """Получение и обработка субтитров"""
     try:
-        transcript = YouTubeTranscriptApi.get_transcript(video_id, languages=['en'])
+        transcript = YouTubeTranscriptApi.get_transcript(video_id, languages=['ru','ko','en'])
         return " ".join([entry['text'] for entry in transcript])
     except (TranscriptsDisabled, NoTranscriptFound):
         try:
             transcript_list = YouTubeTranscriptApi.list_transcripts(video_id)
-            auto_sub = transcript_list.find_generated_transcript(['en'])
+            auto_sub = transcript_list.find_generated_transcript(['ru','ko','en'])
             return " ".join([entry.text for entry in auto_sub.fetch()])
         except Exception as e:
             logger.error(f"Transcript error: {str(e)}")
@@ -69,7 +69,7 @@ def summarize_with_deepseek(text):
             messages=[
                 {
                     "role": "system", 
-                    "content": "You are an expert summarizer. Create concise bullet-point summary in English."
+                    "content": "You are an expert summarizer. Create concise bullet-point summary in the language that matches the text provided."
                 },
                 {
                     "role": "user",
