@@ -28,26 +28,26 @@ tokenizer = tiktoken.get_encoding("cl100k_base")
 
 def extract_video_id(url):
     patterns = [
-        r"v=([a-zA-Z0-9_-]{11})",
-        r"youtu\.be/([a-zA-Z0-9_-]{11})",
-        r"embed/([a-zA-Z0-9_-]{11})",
-        r"shorts/([a-zA-Z0-9_-]{11})"
+        r"v=([a-zA-Z0-9_-]{11})",         # Совпадение после v=
+        r"youtu\.be/([a-zA-Z0-9_-]{11})", # Совпадение после youtu.be/
+        r"embed/([a-zA-Z0-9_-]{11})",     # Совпадение после embed/
+        r"shorts/([a-zA-Z0-9_-]{11})"     # Совпадение после shorts/
     ]
     for pattern in patterns:
-        match = re.search(pattern, url)
+        match = re.search(pattern, url)   # Ищем первое совпадение
         if match:
-            return match.group(1)
+            return match.group(1)         # Возвращаем содержимое первых скобок ()
     return None
 
 def get_transcript(video_id):
     """Получение и обработка субтитров"""
     try:
-        transcript = YouTubeTranscriptApi.get_transcript(video_id, languages=['en'])
+        transcript = YouTubeTranscriptApi.get_transcript(video_id, languages=['ru','ko','en'])
         return " ".join([entry['text'] for entry in transcript])
     except (TranscriptsDisabled, NoTranscriptFound):
         try:
             transcript_list = YouTubeTranscriptApi.list_transcripts(video_id)
-            auto_sub = transcript_list.find_generated_transcript(['en'])
+            auto_sub = transcript_list.find_generated_transcript(['ru','ko','en'])
             return " ".join([entry.text for entry in auto_sub.fetch()])
         except Exception as e:
             logger.error(f"Transcript error: {str(e)}")
@@ -69,7 +69,7 @@ def summarize_with_deepseek(text):
             messages=[
                 {
                     "role": "system", 
-                    "content": "You are an expert summarizer. Create concise bullet-point summary in English."
+                    "content": "You are an expert summarizer. Create concise bullet-point summary In the language that matches the text provided."
                 },
                 {
                     "role": "user",
